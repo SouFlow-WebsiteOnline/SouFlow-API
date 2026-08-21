@@ -77,7 +77,8 @@ public class CartServiceImpl implements CartService {
 	            ? Sort.by("id").ascending()
 	            : Sort.by("id").descending();
 		Pageable pageable = PageRequest.of(pageNumber, pageSize, sort);
-		Page<Cart> page = cartRepo.filterCarts(keyword, fromDate, toDate, expired, deleted, pageable);
+		String sanitizedKeyword = com.souflow.utils.StringUtil.sanitizeSqlLikeKeyword(keyword);
+		Page<Cart> page = cartRepo.filterCarts(sanitizedKeyword, fromDate, toDate, expired, deleted, pageable);
 		List<CartResponse> responses = cartMapper.toResponseList(page.getContent());
 		return new PageResponse<>(page, responses);
 	}

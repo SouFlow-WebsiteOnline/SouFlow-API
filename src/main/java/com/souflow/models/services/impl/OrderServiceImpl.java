@@ -32,9 +32,6 @@ import com.souflow.models.entities.Discount;
 import com.souflow.models.responses.NotificationMessage;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import com.souflow.models.repositories.PaymentRepository;
-import com.souflow.models.entities.Payment;
-
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 
@@ -55,8 +52,6 @@ public class OrderServiceImpl implements OrderService {
 
     private final SimpMessagingTemplate messagingTemplate;
 
-    private final PaymentRepository paymentRepo;
-
     @Override
     @Transactional
     @CachePut(value = "orderList", key = "T(Long).valueOf(#result.pk)")
@@ -64,23 +59,6 @@ public class OrderServiceImpl implements OrderService {
     	@CacheEvict(value = "orderPages", allEntries = true)
     })
     public OrderResponse save(OrderRequest request) {
-        boolean statusChangedToPaid = false;
-        boolean autoPayOnDelivered = false;
-        if (request.getPk() != null) {
-            Order oldOrder = orderRepo.findById(request.getPk()).orElse(null);
-            if (oldOrder != null) {
-                if (request.getStatus() == OrderStatus.PAID && oldOrder.getStatus() != OrderStatus.PAID) {
-                    statusChangedToPaid = true;
-                }
-                if (request.getStatus() == OrderStatus.DELIVERED && oldOrder.getStatus() != OrderStatus.DELIVERED) {
-                    if (oldOrder.getStatus() != OrderStatus.PAID && 
-                        ("COD".equalsIgnoreCase(oldOrder.getPaymentMethod()) || "STORE".equalsIgnoreCase(oldOrder.getPaymentMethod()))) {
-                        autoPayOnDelivered = true;
-                    }
-                }
-            }
-        }
-        
         Order order = orderMapper.toEntity(request);
 
         // Track and Validate discount usage
@@ -89,15 +67,15 @@ public class OrderServiceImpl implements OrderService {
             if (discount == null || Boolean.TRUE.equals(discount.getDeleted())) {
                 throw new IllegalArgumentException("Mã khuyến mãi không hợp lệ hoặc không tồn tại.");
             }
+            if (Boolean.TRUE.equals(discount.getExpired()) || 
+               (discount.getExpiredDate() != null && discount.getExpiredDate().isBefore(LocalDateTime.now()))) {
+                throw new IllegalArgumentException("Mã khuyến mãi đã hết hạn.");
+            }
             if (discount.getUsageLimit() != null && discount.getUsageLimit() > 0) {
                 int current = discount.getCurrentUsage() != null ? discount.getCurrentUsage() : 0;
                 if (current >= discount.getUsageLimit()) {
                     throw new IllegalArgumentException("Mã khuyến mãi đã hết lượt sử dụng.");
                 }
-            }
-            if (Boolean.TRUE.equals(discount.getExpired()) || 
-               (discount.getExpiredDate() != null && discount.getExpiredDate().isBefore(LocalDateTime.now()))) {
-                throw new IllegalArgumentException("Mã khuyến mãi đã hết hạn.");
             }
             
             // Calculate subtotal to check minOrderAmount
@@ -156,31 +134,6 @@ public class OrderServiceImpl implements OrderService {
         }
         
         Order saved = orderRepo.save(order);
-        
-        if (statusChangedToPaid || autoPayOnDelivered) {
-            Payment payment = new Payment();
-            payment.setOrder(saved);
-            payment.setAmount(saved.getTotal());
-            payment.setPaymentDate(LocalDateTime.now());
-            payment.setPaid(true);
-            paymentRepo.save(payment);
-            
-            if (saved.getOrderDetails() != null) {
-                saved.getOrderDetails().forEach(detail -> {
-                    productRepo.increaseSales(detail.getProduct().getPk(), detail.getQuantity());
-                });
-            }
-            
-            NotificationMessage msg = NotificationMessage.builder()
-                .type("ORDER_PAID")
-                .title("Đơn hàng đã thanh toán")
-                .message("Đơn hàng " + saved.getCode() + " vừa được thanh toán thành công.")
-                .referenceId(saved.getCode())
-                .timestamp(LocalDateTime.now().toString())
-                .build();
-            messagingTemplate.convertAndSend("/topic/admin.notifications", msg);
-        }
-        
         clearRelatedCaches(saved.getPk());
         return orderMapper.toResponse(saved);
     }
@@ -201,7 +154,6 @@ public class OrderServiceImpl implements OrderService {
                     productRepo.increaseQuantity(detail.getProduct().getPk(), detail.getQuantity());
                 });
             }
-            restoreDiscountUsage(exist);
             orderRepo.softDelete(orderPk);
             clearRelatedCaches(orderPk);
         }
@@ -237,7 +189,8 @@ public class OrderServiceImpl implements OrderService {
 	            ? Sort.by("pk").ascending()
 	            : Sort.by("pk").descending();
     	Pageable pageable = PageRequest.of(pageNumber, pageSize, sort);
-    	Page<Order> page = orderRepo.filterOrders(keyword, accountPk, fromDate, toDate, status, expired, deleted, pageable);
+    	String sanitizedKeyword = com.souflow.utils.StringUtil.sanitizeSqlLikeKeyword(keyword);
+    	Page<Order> page = orderRepo.filterOrders(sanitizedKeyword, accountPk, fromDate, toDate, status, expired, deleted, pageable);
     	List<OrderResponse> responses = orderMapper.toResponseList(page.getContent());
         return new PageResponse<>(page, responses);
     }
@@ -383,31 +336,13 @@ public class OrderServiceImpl implements OrderService {
                     productRepo.increaseQuantity(detail.getProduct().getPk(), detail.getQuantity());
                 });
             }
-            restoreDiscountUsage(order);
             orderRepo.save(order);
             clearRelatedCaches(orderPk);
         } else if (order.getStatus() != status) {
-            boolean shouldInsertPayment = false;
-            if (status == OrderStatus.PAID && order.getOrderDetails() != null) {
-                shouldInsertPayment = true;
-            } else if (status == OrderStatus.DELIVERED && order.getOrderDetails() != null) {
-                if (order.getStatus() != OrderStatus.PAID && 
-                    ("COD".equalsIgnoreCase(order.getPaymentMethod()) || "STORE".equalsIgnoreCase(order.getPaymentMethod()))) {
-                    shouldInsertPayment = true;
-                }
-            }
-            
             order.setStatus(status);
             orderRepo.save(order);
-
-            if (shouldInsertPayment) {
-                Payment payment = new Payment();
-                payment.setOrder(order);
-                payment.setAmount(order.getTotal());
-                payment.setPaymentDate(LocalDateTime.now());
-                payment.setPaid(true);
-                paymentRepo.save(payment);
-
+            // If marked as PAID manually, SePay logic also does it unconditionally but this is a fallback
+            if (status == OrderStatus.PAID && order.getOrderDetails() != null) {
                 order.getOrderDetails().forEach(detail -> {
                     productRepo.increaseSales(detail.getProduct().getPk(), detail.getQuantity());
                 });
@@ -427,7 +362,8 @@ public class OrderServiceImpl implements OrderService {
                 case WAITING_PAYMENT -> "Chờ thanh toán";
                 case PAID -> "Đã thanh toán";
                 case PROCESSING -> "Đang xử lý";
-                case DELIVERED -> "Hoàn tất";
+                case SHIPPED -> "Đang giao hàng";
+                case DELIVERED -> "Đã giao hàng";
                 case CANCELLED -> "Đã hủy";
             };
 
@@ -469,31 +405,6 @@ public class OrderServiceImpl implements OrderService {
                     org.springframework.cache.Cache productDetailListCache = cacheManager.getCache("productDetailList");
                     if (productDetailListCache != null) productDetailListCache.evict(productPk);
                 });
-            }
-        }
-    }
-
-    private void restoreDiscountUsage(Order order) {
-        if (order.getDiscountCode() != null && !order.getDiscountCode().trim().isEmpty()) {
-            Discount discount = discountRepo.findByCode(order.getDiscountCode().trim());
-            if (discount != null) {
-                if (discount.getCurrentUsage() != null && discount.getCurrentUsage() > 0) {
-                    discount.setCurrentUsage(discount.getCurrentUsage() - 1);
-                    
-                    if (Boolean.TRUE.equals(discount.getExpired()) && discount.getUsageLimit() != null && discount.getCurrentUsage() < discount.getUsageLimit()) {
-                        if (discount.getExpiredDate() == null || discount.getExpiredDate().isAfter(LocalDateTime.now())) {
-                            discount.setExpired(false);
-                        }
-                    }
-                    discountRepo.save(discount);
-                    
-                    if (cacheManager != null) {
-                        org.springframework.cache.Cache dpCache = cacheManager.getCache("discountPages");
-                        if (dpCache != null) dpCache.clear();
-                        org.springframework.cache.Cache dlCache = cacheManager.getCache("discountList");
-                        if (dlCache != null) dlCache.evict(String.valueOf(discount.getPk()));
-                    }
-                }
             }
         }
     }
