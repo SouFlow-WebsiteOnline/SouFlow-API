@@ -109,7 +109,7 @@ public class PaymentServiceImpl implements PaymentService {
             Long orderId = Long.parseLong(digitsOnly);
             Order order = orderRepository.findById(orderId).orElse(null);
             
-            if (order != null && order.getStatus() == OrderStatus.PENDING) {
+            if (order != null && (order.getStatus() == OrderStatus.WAITING_PAYMENT || order.getStatus() == OrderStatus.PENDING)) {
                 // Kiểm tra xem số tiền chuyển có đủ không (tùy chọn, hiện tại đang paid vô điều kiện)
                 Payment payment = new Payment();
                 payment.setOrder(order);
@@ -121,7 +121,7 @@ public class PaymentServiceImpl implements PaymentService {
                 orderService.markOrderAsPaidUnconditionally(orderId);
                 log.info("SePay webhook SUCCESS: Order {} marked as PAID and payment saved", orderId);
             } else {
-                log.info("SePay webhook ignored: Order {} not found or not PENDING", orderId);
+                log.info("SePay webhook ignored: Order {} not found or not WAITING_PAYMENT/PENDING", orderId);
             }
         } catch (Exception e) {
             log.error("Error processing webhook", e);
