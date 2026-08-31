@@ -66,6 +66,11 @@ public interface DiscountRepository extends JpaRepository<Discount, Long> {
     
     @Modifying
     @Transactional
+    @Query("UPDATE Discount d SET d.expired = true WHERE d.expired = false AND d.expiredDate <= CURRENT_TIMESTAMP")
+    int expireOldDiscounts();
+
+    @Modifying
+    @Transactional
     @Query("UPDATE Discount d SET d.deleted = true WHERE d.pk = :pk")
     int softDelete(@Param("pk") Long pk);
 
