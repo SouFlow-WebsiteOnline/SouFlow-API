@@ -16,18 +16,26 @@ import com.souflow.models.entities.OrderDetail;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.beans.factory.annotation.Value;
+
 @Service
 @RequiredArgsConstructor
 public class EmailService {
 
     private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.from:${MAIL_FROM:no-reply@souflow.shop}}")
+    private String mailFrom;
+
+    @Value("${spring.mail.from-name:${MAIL_FROM_NAME:SouFlow Botanical Artistry}}")
+    private String mailFromName;
     
     @Async
     public void sendEmailWithInlineImage(String to, Order order) throws Exception { //asynchronous with js
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-        helper.setFrom("nv80804@gmail.com");
+        helper.setFrom(mailFrom, mailFromName);
         helper.setTo(to);
         helper.setSubject("Thông tin đơn hàng");
 
@@ -115,11 +123,23 @@ public class EmailService {
     @Async
     public void sendOtpEmail(String to, String otp) throws Exception {
         MimeMessage message = mailSender.createMimeMessage();
+        message.setHeader("Auto-Submitted", "auto-generated");
+        message.setHeader("X-Auto-Response-Suppress", "All");
+        
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-        helper.setFrom("nv80804@gmail.com");
+        helper.setFrom(mailFrom, mailFromName);
         helper.setTo(to);
-        helper.setSubject("Mã xác thực quên mật khẩu");
+        helper.setSubject("[SouFlow] Mã xác thực đặt lại mật khẩu");
+
+        String plainText = """
+        SouFlow - Mã xác thực đặt lại mật khẩu
+        
+        Mã xác thực OTP của bạn là: %s
+        Mã này có hiệu lực trong vòng 5 phút. Vui lòng không chia sẻ mã này cho bất kỳ ai.
+        
+        SouFlow • Tinh hoa hoa tươi nghệ thuật & quà tặng cao cấp
+        Website: souflow.shop
+        """.formatted(otp);
 
         String htmlContent = """
         <div style="font-family:Arial, sans-serif; max-width:500px; margin:auto; border:1px solid #ddd; padding: 20px; text-align: center;">
@@ -132,11 +152,63 @@ public class EmailService {
             <p style="color: #6c757d; font-size: 14px;">Mã OTP này có hiệu lực trong vòng 5 phút. Vui lòng không chia sẻ mã này với bất kỳ ai.</p>
             <p>Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này.</p>
             <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #999;">Trân trọng,<br/>Đội ngũ Soul Flow</p>
+            <p style="font-size: 12px; color: #999;">Trân trọng,<br/>Đội ngũ SouFlow</p>
         </div>
         """.formatted(otp);
 
-        helper.setText(htmlContent, true);
+        helper.setText(plainText, htmlContent);
+        mailSender.send(message);
+    }
+
+    @Async
+    public void sendRegisterOtpEmail(String to, String otp) throws Exception {
+        MimeMessage message = mailSender.createMimeMessage();
+        message.setHeader("Auto-Submitted", "auto-generated");
+        message.setHeader("X-Auto-Response-Suppress", "All");
+
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        helper.setFrom(mailFrom, mailFromName);
+        helper.setTo(to);
+        helper.setSubject("[SouFlow] Mã xác thực đăng ký tài khoản");
+
+        String plainText = """
+        SouFlow Botanical Artistry - Xác thực tạo tài khoản
+        
+        Chào mừng bạn đến với SouFlow!
+        Mã xác thực OTP đăng ký của bạn là: %s
+        
+        Mã OTP này có hiệu lực trong vòng 5 phút. Vui lòng không chia sẻ cho bất kỳ ai.
+        
+        SouFlow • Tinh hoa hoa tươi nghệ thuật & quà tặng cao cấp
+        Hotline: 0901 234 567 | Website: souflow.shop
+        """.formatted(otp);
+
+        String htmlContent = """
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: auto; border: 1px solid #EBE5DA; border-radius: 16px; overflow: hidden; background: #FAF7F2;">
+            <div style="background: #2D2825; color: #FFFFFF; padding: 24px; text-align: center;">
+                <h1 style="margin: 0; font-family: Georgia, serif; font-size: 24px; font-weight: normal; letter-spacing: 2px;">SOUFLOW</h1>
+                <p style="margin: 4px 0 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #C49B83;">Botanical Artistry</p>
+            </div>
+            <div style="padding: 28px 24px; text-align: center; color: #2D2825;">
+                <h2 style="font-family: Georgia, serif; font-size: 20px; margin-top: 0; color: #2D2825;">Xác Thực Tạo Tài Khoản</h2>
+                <p style="font-size: 14px; line-height: 1.6; color: #5C5550; margin: 12px 0 20px 0;">
+                    Chào mừng bạn đến với <b>SouFlow</b>. Để hoàn tất đăng ký và mở khóa tính năng đặt hoa & thanh toán, vui lòng nhập mã xác thực OTP dưới đây:
+                </p>
+                <div style="background: #FFFFFF; border: 2px dashed #C49B83; padding: 18px 24px; margin: 20px auto; font-size: 30px; font-weight: bold; letter-spacing: 8px; color: #9E6B55; border-radius: 12px; display: inline-block;">
+                    %s
+                </div>
+                <p style="color: #8C847E; font-size: 13px; margin: 16px 0 0 0;">
+                    ⏳ Mã OTP này có hiệu lực trong vòng <b>5 phút</b>. Vui lòng không chia sẻ mã này cho bất kỳ ai.
+                </p>
+            </div>
+            <div style="background: #F2ECE1; padding: 16px 24px; text-align: center; font-size: 12px; color: #8C847E; border-top: 1px solid #EBE5DA;">
+                SouFlow • Tinh hoa hoa tươi nghệ thuật & quà tặng cao cấp<br/>
+                Hotline hỗ trợ: 0901 234 567 | Website: souflow.shop
+            </div>
+        </div>
+        """.formatted(otp);
+
+        helper.setText(plainText, htmlContent);
         mailSender.send(message);
     }
 }

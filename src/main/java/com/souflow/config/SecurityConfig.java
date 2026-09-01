@@ -52,6 +52,7 @@ public class SecurityConfig {
 	        .authenticationProvider(authenticationProvider())
 	        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
 	        .authorizeHttpRequests(auth -> auth
+	            .requestMatchers("/admin/login", "/admin/google/login").permitAll()
 	            .requestMatchers("/admin/**").hasAuthority("ADMIN")
 	            .requestMatchers("/user/**").hasAnyAuthority("USER", "ADMIN")
 	            .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()

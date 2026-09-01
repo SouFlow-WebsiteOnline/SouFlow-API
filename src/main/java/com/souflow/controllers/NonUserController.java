@@ -24,12 +24,12 @@ import com.souflow.models.responses.ReplyResponse;
 import com.souflow.models.requests.ForgotPasswordRequest;
 import com.souflow.models.requests.ResetPasswordRequest;
 import com.souflow.models.requests.VerifyOtpRequest;
-import com.souflow.models.services.AccountService;
-import com.souflow.models.services.ProductService;
+import com.souflow.models.services.*;
 import com.souflow.models.services.impl.AccountServiceImpl.GoogleTokenDTO;
 import com.souflow.models.services.impl.DiscordNotificationService;
-import com.souflow.models.services.DiscountService;
 import com.souflow.models.responses.DiscountResponse;
+import com.souflow.models.responses.NotificationMessage;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import lombok.RequiredArgsConstructor;
 
@@ -37,15 +37,20 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class NonUserController  {
 
-    private final AdminController adminController;
     private final AccountService accountService;
     private final ProductService productService;
+    private final CategoryService categoryService;
+    private final CommentService commentService;
+    private final ReplyService replyService;
+    private final PaymentService paymentService;
     private final DiscordNotificationService discordService;
     private final DiscountService discountService;
+    private final CustomOrderService customOrderService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @PostMapping("/login")
     AuthResponse login(@RequestBody AuthRequest request) {
-        return adminController.login(request);
+        return accountService.login(request);
     }
 
     @PostMapping("/register")
@@ -53,9 +58,24 @@ public class NonUserController  {
         return accountService.register(request);
     }
 
+    @PostMapping("/register/send-otp")
+    void sendRegisterOtp(@RequestBody com.souflow.models.requests.AccountRequest request) {
+        accountService.sendRegisterOtp(request);
+    }
+
+    @PostMapping("/register/verify-otp")
+    AuthResponse verifyRegisterOtp(@RequestBody VerifyOtpRequest request) {
+        return accountService.verifyRegisterOtp(request);
+    }
+
     @PostMapping("/google/login")
     AuthResponse googleLogin(@RequestBody GoogleTokenDTO token) {
-        return adminController.googleLogin(token);
+        return accountService.loginWithGoogle(token);
+    }
+
+    @PostMapping("/auth/refresh")
+    AuthResponse refreshToken(@RequestBody com.souflow.models.requests.RefreshTokenRequest request) {
+        return accountService.refreshToken(request);
     }
 
     @PostMapping("/forgot-password")
@@ -75,7 +95,7 @@ public class NonUserController  {
 
     @GetMapping("/category/list")
     List<CategoryResponse> findAll() {
-        return adminController.findCategoryList();
+        return categoryService.findAll();
     }
 
     @GetMapping("/comment")
@@ -88,7 +108,7 @@ public class NonUserController  {
 		@RequestParam(defaultValue = "0") Integer pageNumber, 
 		@RequestParam(defaultValue = "5") Integer pageSize
     ) {
-        return adminController.filterAndPaginateComments(keyword, fromDate, toDate, sortOrder, deleted, pageNumber, pageSize);
+        return commentService.filterAndPaginateComments(keyword, fromDate, sortOrder, toDate, deleted, pageNumber, pageSize);
     }
 
     @GetMapping("/reply")
@@ -101,7 +121,7 @@ public class NonUserController  {
             @RequestParam(defaultValue = "0") Integer pageNumber,
             @RequestParam(defaultValue = "5") Integer pageSize
     ) {
-        return adminController.filterAndPaginateReplies(keyword, fromDate, toDate, deleted, sortOrder, pageNumber, pageSize);
+        return replyService.filterAndPaginateReply(keyword, fromDate, toDate, deleted, sortOrder, pageNumber, pageSize);
     }
 
     @GetMapping("/product")
@@ -119,22 +139,22 @@ public class NonUserController  {
 			@RequestParam(defaultValue = "0") Integer pageNumber, 
 			@RequestParam(defaultValue = "5") Integer pageSize
 	) {
-        return adminController.filterAndPaginateProducts(keyword, minPrice, maxPrice, fromDate, toDate, categoryPk, customised, available, deleted, sortOrder, pageNumber, pageSize);
+        return productService.filterAndPaginateProducts(keyword, minPrice, maxPrice, categoryPk, customised, available, deleted, fromDate, toDate, sortOrder, pageNumber, pageSize);
 	}
 
     @GetMapping("/product/top-sales")
     List<ProductResponse> getTopSales() {
-        return productService.getTop12Bestsellers();
+        return productService.getTop5Bestsellers();
     }
 
     @GetMapping("/product/detail/{pk}")
     ProductResponse findProductDetailByPk(@PathVariable Long pk) {
-        return adminController.findProductDetailByPk(pk);
+        return productService.findProductDetailByPk(pk);
     }
 
     @GetMapping("/product/by-code/{code}")
     ProductResponse findProductByCode(@PathVariable String code) {
-        return adminController.findProductByCode(code);
+        return productService.findProductByCode(code);
     }
 
     @PostMapping("/sepay-webhook")
@@ -142,7 +162,7 @@ public class NonUserController  {
         @RequestHeader(value = "X-SePay-Signature", required = false) String sepaySignature,
         @RequestHeader(value = "X-SePay-Timestamp", required = false) String sepayTimestamp,
         @RequestBody byte[] rawPayloadBytes) {
-        adminController.processSepayWebhook(sepaySignature, sepayTimestamp, rawPayloadBytes);
+        paymentService.processSepayWebhook(sepaySignature, sepayTimestamp, rawPayloadBytes);
         return org.springframework.http.ResponseEntity.ok(java.util.Map.of("success", true));
     }
 
@@ -157,7 +177,13 @@ public class NonUserController  {
     }
 
     @PostMapping("/notify/custom-order")
-    public void notifyCustomOrder(@RequestBody java.util.Map<String, Object> payload) {
-        discordService.sendCustomOrderNotification(payload);
+    public void notifyCustomOrder(@RequestBody java.util.Map<String, Object> payload, jakarta.servlet.http.HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        } else if (ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        customOrderService.recordRequest(payload, ip);
     }
 }
