@@ -43,10 +43,13 @@ import com.souflow.utils.JwtUtil;
 import com.souflow.models.services.RefreshTokenService;
 
 import jakarta.persistence.EntityNotFoundException;
-import lombok.RequiredArgsConstructor;
-
 import org.springframework.cache.CacheManager;
+import com.souflow.models.enums.OtpValidationResult;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import java.util.Optional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -64,7 +67,124 @@ public class AccountServiceImpl implements AccountService {
 	private final OtpService otpService;
 	private final EmailService emailService;
 	private final RefreshTokenService refreshTokenService;
+	private final com.souflow.models.services.SystemLogService systemLogService;
 	
+	private void checkOtpValidationResult(OtpValidationResult result, String email) {
+		switch (result) {
+			case SUCCESS -> {}
+			case INVALID_OTP -> throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST, "Mã OTP không chính xác. Vui lòng kiểm tra lại!");
+			case MAX_ATTEMPTS_EXCEEDED -> {
+				long minutes = otpService.getRemainingBlockMinutes(email);
+				throw new ResponseStatusException(
+						HttpStatus.TOO_MANY_REQUESTS,
+						"Bạn đã nhập sai mã OTP quá 5 lần. Email tạm thời bị khóa xác thực trong " + minutes + " phút!");
+			}
+			case EXPIRED_OR_NOT_FOUND -> throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST, "Mã OTP không hợp lệ hoặc đã hết hạn!");
+		}
+	}
+
+	@Override
+	public void sendRegisterOtp(AccountRequest request) {
+		String username = request.getUsername() != null ? request.getUsername().trim() : "";
+		String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+
+		if (username.isBlank() || email.isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tên tài khoản và email không được để trống!");
+		}
+
+		if (otpService.isBlocked(email)) {
+			long minutes = otpService.getRemainingBlockMinutes(email);
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+					"Email này đang bị tạm khóa xác thực OTP do nhập sai quá nhiều lần. Vui lòng thử lại sau " + minutes + " phút!");
+		}
+
+		if (accountRepo.findByUsername(username).isPresent()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tên tài khoản này đã được sử dụng!");
+		}
+		if (accountRepo.findByEmail(email).isPresent()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email này đã được sử dụng!");
+		}
+
+		if (otpService.isCooldownActive(email)) {
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Vui lòng đợi 60 giây trước khi yêu cầu gửi lại mã OTP!");
+		}
+
+		request.setUsername(username);
+		request.setEmail(email);
+
+		String otp = otpService.generateRegisterOtp(email, request);
+		try {
+			emailService.sendRegisterOtpEmail(email, otp);
+		} catch (Exception e) {
+			log.error("Lỗi khi gửi mã OTP đăng ký tới {}", email, e);
+			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Lỗi khi gửi mã OTP qua email");
+		}
+	}
+
+	@Override
+	@Transactional
+	public AuthResponse verifyRegisterOtp(VerifyOtpRequest request) {
+		String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+		String otp = request.getOtp() != null ? request.getOtp().trim() : "";
+
+		if (otpService.isBlocked(email)) {
+			long minutes = otpService.getRemainingBlockMinutes(email);
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+					"Email này đang bị tạm khóa xác thực OTP. Vui lòng thử lại sau " + minutes + " phút!");
+		}
+
+		OtpValidationResult validationResult = otpService.validateRegisterOtp(email, otp);
+		checkOtpValidationResult(validationResult, email);
+
+		AccountRequest registerData = otpService.getRegisterData(email);
+		if (registerData == null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thông tin đăng ký đã hết hạn. Vui lòng thực hiện lại!");
+		}
+
+		String username = registerData.getUsername() != null ? registerData.getUsername().trim() : "";
+		if (accountRepo.findByUsername(username).isPresent()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tên tài khoản này đã được sử dụng!");
+		}
+		if (accountRepo.findByEmail(email).isPresent()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email này đã được sử dụng!");
+		}
+
+		Role role = roleRepo.findByCode(RoleCode.USER)
+				.orElseThrow(() -> new EntityNotFoundException("Role USER not found"));
+
+		registerData.setUsername(username);
+		registerData.setEmail(email);
+		Account account = accountMapper.toEntity(registerData);
+		account.setPassword(passwordEncoder.encode(registerData.getPassword()));
+		account.setRole(role);
+		account.setCreatedDate(LocalDateTime.now());
+
+		try {
+			account = accountRepo.save(account);
+		} catch (org.springframework.dao.DataIntegrityViolationException ex) {
+			log.warn("Trùng lặp tài khoản khi đăng ký đồng thời: username={}, email={}", username, email);
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "Tài khoản hoặc email này đã tồn tại trên hệ thống!");
+		}
+
+		clearAccountCaches(account);
+		otpService.deleteRegisterData(email);
+
+		String token = jwtUtil.generateToken(account.getUsername(), account.getRole().getCode().name());
+		String refreshToken = refreshTokenService.generateAndSaveRefreshToken(account.getUsername(), false);
+
+		return AuthResponse.builder()
+				.token(token)
+				.refreshToken(refreshToken)
+				.pk(String.valueOf(account.getPk()))
+				.fullname(account.getFullname())
+				.email(account.getEmail())
+				.photo(account.getPhoto())
+				.roleCode(account.getRole().getCode().name())
+				.build();
+	}
+
 	@Override
 	@Transactional
 	public AuthResponse register(AccountRequest request) {
@@ -128,6 +248,7 @@ public class AccountServiceImpl implements AccountService {
 		
 		// Send it back to frontend
 		try {
+			systemLogService.log("AUTH", "LOGIN_PASSWORD", account.getUsername(), account.getRole().getCode().name(), account.getUsername(), "Đăng nhập tài khoản / mật khẩu thành công", null);
 			return AuthResponse.builder()
 				.token(token)
 				.refreshToken(refreshToken)
@@ -175,6 +296,8 @@ public class AccountServiceImpl implements AccountService {
                 account.getRole().getCode().name()
             );
             String refreshToken = refreshTokenService.generateAndSaveRefreshToken(account.getUsername(), true);
+
+            systemLogService.log("AUTH", "LOGIN_GOOGLE", account.getUsername(), account.getRole().getCode().name(), account.getEmail(), "Đăng nhập hệ thống qua Google OAuth thành công", null);
 
             return AuthResponse.builder()
 				.token(token)
@@ -231,34 +354,71 @@ public class AccountServiceImpl implements AccountService {
 
 	@Override
 	public void forgotPassword(ForgotPasswordRequest request) {
-		Account account = accountRepo.findByEmail(request.getEmail())
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tài khoản với email này"));
-		
-		String otp = otpService.generateOtp(account.getEmail());
-		try {
-			emailService.sendOtpEmail(account.getEmail(), otp);
-		} catch (Exception e) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Lỗi khi gửi email OTP");
+		String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+		if (email.isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email không được để trống!");
 		}
+
+		if (otpService.isBlocked(email)) {
+			long minutes = otpService.getRemainingBlockMinutes(email);
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+					"Email này đang bị tạm khóa xác thực OTP do nhập sai quá nhiều lần. Vui lòng thử lại sau " + minutes + " phút!");
+		}
+
+		if (otpService.isCooldownActive(email)) {
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Vui lòng đợi 60 giây trước khi yêu cầu gửi lại mã OTP!");
+		}
+
+		Optional<Account> accountOpt = accountRepo.findByEmail(email);
+		if (accountOpt.isPresent()) {
+			String otp = otpService.generateOtp(email);
+			try {
+				emailService.sendOtpEmail(email, otp);
+			} catch (Exception e) {
+				log.error("Lỗi khi gửi email OTP quên mật khẩu tới {}", email, e);
+			}
+		} else {
+			// Set cooldown for non-existing email to prevent high-frequency scanning
+			otpService.setCooldown(email);
+			// Random small delay to mitigate timing-based user enumeration attacks
+			try {
+				Thread.sleep(100 + (long)(Math.random() * 80));
+			} catch (InterruptedException ignored) {}
+		}
+		// Trả về 200 generic message chuẩn OWASP phòng tránh dò email (User Enumeration Prevention)
 	}
 
 	@Override
 	public void verifyOtp(VerifyOtpRequest request) {
-		boolean isValid = otpService.verifyOtpWithoutDeleting(request.getEmail(), request.getOtp());
-		if (!isValid) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mã OTP không hợp lệ hoặc đã hết hạn");
+		String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+		String otp = request.getOtp() != null ? request.getOtp().trim() : "";
+
+		if (otpService.isBlocked(email)) {
+			long minutes = otpService.getRemainingBlockMinutes(email);
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+					"Email này đang bị tạm khóa xác thực OTP. Vui lòng thử lại sau " + minutes + " phút!");
 		}
+
+		OtpValidationResult validationResult = otpService.verifyOtpWithoutDeleting(email, otp);
+		checkOtpValidationResult(validationResult, email);
 	}
 
 	@Override
 	@Transactional
 	public void resetPassword(ResetPasswordRequest request) {
-		boolean isValid = otpService.validateOtp(request.getEmail(), request.getOtp());
-		if (!isValid) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mã OTP không hợp lệ hoặc đã hết hạn");
+		String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+		String otp = request.getOtp() != null ? request.getOtp().trim() : "";
+
+		if (otpService.isBlocked(email)) {
+			long minutes = otpService.getRemainingBlockMinutes(email);
+			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+					"Email này đang bị tạm khóa xác thực OTP. Vui lòng thử lại sau " + minutes + " phút!");
 		}
+
+		OtpValidationResult validationResult = otpService.validateOtp(email, otp);
+		checkOtpValidationResult(validationResult, email);
 		
-		Account account = accountRepo.findByEmail(request.getEmail())
+		Account account = accountRepo.findByEmail(email)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tài khoản với email này"));
 		
 		account.setPassword(passwordEncoder.encode(request.getNewPassword()));

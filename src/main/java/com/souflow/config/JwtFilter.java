@@ -33,12 +33,14 @@ public class JwtFilter extends OncePerRequestFilter {
 
         //skip filter
         if (path.startsWith("/images/") ||
-        	path.startsWith("/login/") ||
-            path.startsWith("/product/") ||
-            path.startsWith("/category/") ||
-            path.startsWith("/ai/") ||
-            path.startsWith("/google/") ||
-            path.startsWith("/ws/")){
+        	path.equals("/login") || path.startsWith("/login/") ||
+        	path.equals("/admin/login") || path.startsWith("/admin/login/") ||
+        	path.equals("/register") || path.startsWith("/register/") ||
+            path.startsWith("/product") ||
+            path.startsWith("/category") ||
+            path.startsWith("/ai") ||
+            path.startsWith("/google") ||
+            path.startsWith("/ws")){
             chain.doFilter(request, response);
             return;
         }

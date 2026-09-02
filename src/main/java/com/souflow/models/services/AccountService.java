@@ -18,6 +18,8 @@ public interface AccountService {
     void forgotPassword(ForgotPasswordRequest request);
     void verifyOtp(VerifyOtpRequest request);
     void resetPassword(ResetPasswordRequest request);
+	void sendRegisterOtp(AccountRequest request);
+	AuthResponse verifyRegisterOtp(VerifyOtpRequest request);
 	AuthResponse register(AccountRequest request);
 	AuthResponse login(AuthRequest authRequest);
 	AuthResponse loginWithGoogle(GoogleTokenDTO googleToken);

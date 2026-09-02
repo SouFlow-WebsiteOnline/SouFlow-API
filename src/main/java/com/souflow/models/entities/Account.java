@@ -33,12 +33,14 @@ public class Account {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long pk;
 
+    @Column(unique = true, length = 50)
     private String username;
 
     private String password;
 
     private String fullname;
 
+    @Column(unique = true, length = 50)
     private String email;
 
     private String photo;

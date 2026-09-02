@@ -74,7 +74,9 @@ public class UserController {
         
         request.setPk(Long.valueOf(acc.getPk()));
         request.setUsername(acc.getUsername());
-        
+        request.setRoleRequest(null); // Chặn user tự nâng quyền ADMIN qua update profile
+        request.setDisabled(null);
+
         if (file != null) {
             request.setPhoto(imageService.upload(file));
         } else {
