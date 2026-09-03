@@ -24,11 +24,13 @@ public class CorsConfig {
                 "GET",
                 "POST",
                 "PUT",
+                "PATCH",
                 "DELETE",
                 "OPTIONS"
         ));
 
         config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("*"));
 
         config.setAllowCredentials(true);
 

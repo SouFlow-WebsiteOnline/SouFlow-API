@@ -18,13 +18,19 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .addPathPatterns(
                     "/login", 
                     "/register",
+                    "/register/**",
                     "/google/login",
                     "/forgot-password",
                     "/verify-otp",
                     "/reset-password",
                     "/notify/contact",
                     "/notify/custom-order",
-                    "/admin/login"
+                    "/admin/login",
+                    "/user/order",
+                    "/user/order/**",
+                    "/discount/apply",
+                    "/user/cart",
+                    "/user/cart/**"
                 );
     }
 }
