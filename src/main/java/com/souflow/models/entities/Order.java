@@ -63,7 +63,6 @@ public class Order {
 	private Boolean expired;
 
 	@Enumerated(EnumType.STRING)
-    @Column(insertable = false)
 	private OrderStatus status;
 	
 	@Column(name = "shipping_fee")

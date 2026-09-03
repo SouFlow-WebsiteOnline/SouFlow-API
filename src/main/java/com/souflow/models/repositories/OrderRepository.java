@@ -20,6 +20,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 	
 	Optional<Order> findByCode(String code);
 	
+	java.util.List<Order> findByStatusAndCreatedDateBefore(OrderStatus status, LocalDateTime time);
+	
     @Query("""
         SELECT o
         FROM Order o

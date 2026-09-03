@@ -58,7 +58,7 @@ public abstract class CartMapper {
 			cart.setDeleted(oldCart.getDeleted());
 			cart.setAccount(oldCart.getAccount());
 		} else {
-			cart.setCode("CA-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+			cart.setCode("CART-" + java.util.UUID.randomUUID().toString().substring(0, 6).toUpperCase());
 			cart.setCreatedDate(LocalDateTime.now());
 			cart.setExpiredDate(LocalDateTime.now().plusWeeks(2));
 			cart.setExpired(false);

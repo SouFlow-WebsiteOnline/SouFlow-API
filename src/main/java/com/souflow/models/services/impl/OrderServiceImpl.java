@@ -52,6 +52,8 @@ public class OrderServiceImpl implements OrderService {
 
     private final SimpMessagingTemplate messagingTemplate;
 
+    private final com.souflow.models.services.SystemLogService systemLogService;
+
     @Override
     @Transactional
     @CachePut(value = "orderList", key = "T(Long).valueOf(#result.pk)")
@@ -135,6 +137,33 @@ public class OrderServiceImpl implements OrderService {
         
         Order saved = orderRepo.save(order);
         clearRelatedCaches(saved.getPk());
+        if (request.getPk() == null) {
+            systemLogService.log("ORDER", "CREATE_ORDER", saved.getCode(), "Khách đặt đơn hàng mới: " + saved.getCode() + " - Khách: " + saved.getFullname() + " (" + saved.getPhone() + "), Tổng: " + saved.getTotal() + " đ (" + saved.getPaymentMethod() + ")");
+            
+            String paymentMethod = saved.getPaymentMethod() != null ? saved.getPaymentMethod().toUpperCase() : "COD";
+            String methodTitle = switch(paymentMethod) {
+                case "STORE" -> "Đơn hàng mới (Nhận tại tiệm)";
+                case "SEPAY" -> "Đơn hàng mới (Chờ thanh toán SePay)";
+                default -> "Đơn hàng mới (Giao hàng COD)";
+            };
+            String methodDesc = switch(paymentMethod) {
+                case "STORE" -> "nhận tại cửa hàng";
+                case "SEPAY" -> "chuyển khoản SePay QR";
+                default -> "thanh toán COD khi nhận hàng";
+            };
+            
+            NotificationMessage notif = NotificationMessage.builder()
+                .type("NEW_ORDER")
+                .title(methodTitle)
+                .message("Đơn hàng " + saved.getCode() + " vừa được đặt (" + methodDesc + ") - " + (saved.getFullname() != null ? saved.getFullname() : "Khách hàng"))
+                .referenceId(saved.getCode())
+                .timestamp(LocalDateTime.now().toString())
+                .status(saved.getStatus() != null ? saved.getStatus().name() : "PENDING")
+                .build();
+            messagingTemplate.convertAndSend("/topic/admin.notifications", notif);
+        } else {
+            systemLogService.log("ORDER", "UPDATE_ORDER", saved.getCode(), "Cập nhật thông tin đơn hàng " + saved.getCode());
+        }
         return orderMapper.toResponse(saved);
     }
     
@@ -156,6 +185,7 @@ public class OrderServiceImpl implements OrderService {
             }
             orderRepo.softDelete(orderPk);
             clearRelatedCaches(orderPk);
+            systemLogService.log("ORDER", "DELETE_ORDER", exist.getCode(), "Xóa đơn hàng " + exist.getCode());
         }
     }
 
@@ -302,18 +332,6 @@ public class OrderServiceImpl implements OrderService {
             order.getOrderDetails().forEach(detail -> {
                 productRepo.increaseSales(detail.getProduct().getPk(), detail.getQuantity());
             });
-            
-            String title = "STORE".equalsIgnoreCase(order.getPaymentMethod()) ? "Đơn hàng mới (Tại cửa hàng)" : "Đơn hàng mới (COD)";
-            String methodText = "STORE".equalsIgnoreCase(order.getPaymentMethod()) ? "nhận tại cửa hàng" : "thanh toán khi nhận hàng";
-            
-            NotificationMessage msg = NotificationMessage.builder()
-                .type("NEW_ORDER")
-                .title(title)
-                .message("Đơn hàng " + order.getCode() + " vừa được đặt (" + methodText + ").")
-                .referenceId(order.getCode())
-                .timestamp(LocalDateTime.now().toString())
-                .build();
-            messagingTemplate.convertAndSend("/topic/admin.notifications", msg);
             clearRelatedCaches(orderPk);
         }
     }
@@ -362,7 +380,6 @@ public class OrderServiceImpl implements OrderService {
                 case WAITING_PAYMENT -> "Chờ thanh toán";
                 case PAID -> "Đã thanh toán";
                 case PROCESSING -> "Đang xử lý";
-                case SHIPPED -> "Đang giao hàng";
                 case DELIVERED -> "Đã giao hàng";
                 case CANCELLED -> "Đã hủy";
             };
@@ -382,6 +399,8 @@ public class OrderServiceImpl implements OrderService {
             }
             // Gửi thêm vào kênh riêng của đơn hàng (dùng khi khách đang xem chi tiết hoặc lịch sử đơn hàng đó)
             messagingTemplate.convertAndSend("/topic/order." + order.getCode(), userUpdateMsg);
+
+            systemLogService.log("ORDER", "ORDER_STATUS_UPDATE", order.getCode(), "Chuyển trạng thái đơn hàng " + order.getCode() + " sang " + statusVn);
 
             clearRelatedCaches(orderPk);
         }
