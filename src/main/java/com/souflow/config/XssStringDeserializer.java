@@ -15,7 +15,7 @@ public class XssStringDeserializer extends JsonDeserializer<String> {
             throws IOException, JsonProcessingException {
         String value = p.getValueAsString();
         if (value != null) {
-            return value.trim();
+            return HtmlUtils.htmlEscape(value);
         }
         return value;
     }

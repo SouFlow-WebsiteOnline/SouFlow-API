@@ -36,6 +36,3 @@ build/
 .env
 .env.*
 !.env.example
-
-minio-backup/
-minio-backup.zip

@@ -15,5 +15,5 @@ public class NotificationMessage {
     private String message;
     private String referenceId; // orderCode or productCode
     private String timestamp;
-    private String status; // Trạng thái đơn hàng (PENDING, PAID, SHIPPED, etc.) - dùng cho FE update realtime
+    private String status; // Trạng thái đơn hàng (PENDING, PAID, DELIVERED, etc.) - dùng cho FE update realtime
 }

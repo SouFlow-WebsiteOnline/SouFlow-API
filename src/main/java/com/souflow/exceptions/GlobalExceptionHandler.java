@@ -20,26 +20,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import org.slf4j.MDC;
-import java.util.UUID;
-
-import lombok.extern.slf4j.Slf4j;
-
-@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private ResponseEntity<ErrorResponse> buildError(HttpStatus status, String message, HttpServletRequest request) {
-        String traceId = MDC.get("traceId");
-        if (traceId == null) {
-            traceId = UUID.randomUUID().toString();
-        }
         ErrorResponse body = new ErrorResponse(
             status.value(),
             status.getReasonPhrase(),
             message,
             request.getRequestURI(),
-            traceId,
             LocalDateTime.now()
         );
         return ResponseEntity.status(status).body(body);
@@ -146,13 +135,6 @@ public class GlobalExceptionHandler {
         return buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
     }
 
-    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
-    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(
-            org.springframework.dao.DataIntegrityViolationException ex, HttpServletRequest request) {
-        log.warn("Database constraint violation at {}: {}", request.getRequestURI(), ex.getMessage());
-        return buildError(HttpStatus.CONFLICT, "Dữ liệu bị trùng lặp hoặc vi phạm ràng buộc dữ liệu!", request);
-    }
-
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     public ResponseEntity<ErrorResponse> handleResponseStatus(org.springframework.web.server.ResponseStatusException ex, HttpServletRequest request) {
         return buildError(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason(), request);
@@ -160,10 +142,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAll(Exception ex, HttpServletRequest request) {
-        String traceId = MDC.get("traceId");
         // Log the full stack trace here with your preferred logger:
-        log.error("[TraceID: " + traceId + "] Unhandled exception at " + request.getRequestURI(), ex);
-        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, "Hệ thống đang gặp sự cố. Vui lòng liên hệ CSKH kèm mã lỗi: " + traceId, request);
+        // log.error("Unhandled exception", ex);
+        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), request);
     }
 
     public record ErrorResponse(
@@ -171,7 +152,6 @@ public class GlobalExceptionHandler {
         String error,
         String message,
         String path,
-        String traceId,
         LocalDateTime timestamp
     ) {}
 
