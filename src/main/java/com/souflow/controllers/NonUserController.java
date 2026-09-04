@@ -144,7 +144,7 @@ public class NonUserController  {
 
     @GetMapping("/product/top-sales")
     List<ProductResponse> getTopSales() {
-        return productService.getTop5Bestsellers();
+        return productService.getTop12Bestsellers();
     }
 
     @GetMapping("/product/detail/{pk}")
